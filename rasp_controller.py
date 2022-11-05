@@ -1,9 +1,12 @@
 import multiprocessing
+import queue
 import random
 import socket
 import time
 import io
 import os
+
+from numpy import block
 
 class MultiProcessingSocketLidarController(multiprocessing.Process):
     def __init__(self, host, port):
@@ -17,12 +20,18 @@ class MultiProcessingSocketLidarController(multiprocessing.Process):
 
     def get_distance(self, direction=0):
         direction = float(direction)
-        self.requests.put(("Distance", direction))
-        return_direction, timestamp, distance = self.results.get()
-        return (timestamp if return_direction == direction else None, distance)
+        try:
+            self.requests.put(("Distance", direction), block=False)
+            return_direction, timestamp, distance = self.results.get(block=False)
+            return (timestamp if return_direction == direction else None, distance)
+        except Exception:
+            return (None, None)
 
     def set_motor_speed(self, speed):
-        self.requests.put(("Speed", int(speed)))
+        try:
+            self.requests.put(("Speed", int(speed)), block=False)
+        except Exception:
+            pass
     
     def connected(self):
         return bool(self.connection_alive.value)
@@ -36,24 +45,26 @@ class MultiProcessingSocketLidarController(multiprocessing.Process):
         sock.listen(0)
 
         client, addr = sock.accept()
+        client.settimeout(3)
         self.connection_alive.value = True
         print("Connected to Raspberry Pi, address: ", addr)
 
         try:
-
             while True:
                 if not self.requests.empty():
-                    req = self.requests.get(block=False)
+                    req = self.requests.get()
                     if req[0] == "Distance":
                         direction = req[1]
-                        client.send(b"\xa4"+direction.hex().encode())
+                        print("Setting direction: ", direction)
+                        ret = client.send(b"\xa4"+direction.hex().encode())
+                        print("ret", ret)
                         msg = client.recvmsg(512)[0]
+                        print("msg", msg)
 
                         if not msg:
-                            # self.connection_alive.value = False
-                            # print("Lidar Connection broken")
-                            # break
-                            continue
+                            self.connection_alive.value = False
+                            print("Lidar Connection broken")
+                            break
 
                         # \xa4 + time_hex(21) + distance
                         br = io.BytesIO(msg)
@@ -70,7 +81,10 @@ class MultiProcessingSocketLidarController(multiprocessing.Process):
 
                     if req[0] == "Speed":
                         speed = req[1]
+                        print("Setting speed to", speed)
                         client.send(b"\xa5"+speed.to_bytes(1, byteorder="big"))
+        except Exception as e:
+            print(e)
         finally:
             client.close()
 
