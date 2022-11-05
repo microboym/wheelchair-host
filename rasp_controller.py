@@ -5,6 +5,7 @@ import time
 import io
 import os
 
+# Lidar Controller class
 class MultiProcessingSocketLidarController(multiprocessing.Process):
     def __init__(self, host, port):
         multiprocessing.Process.__init__(self)
